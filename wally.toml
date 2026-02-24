@@ -1,0 +1,11 @@
+[package]
+name = "johnastinnett/strata"
+version = "0.1.0"
+description = "Append-only world state migration framework for Roblox"
+license = "MIT"
+authors = ["John Stinnett"]
+realm = "server"
+registry = "https://github.com/UpliftGames/wally-index"
+private = true
+
+[dependencies]
