@@ -3,8 +3,7 @@
 
 local StrataTypes = {}
 
--- The type of migration. Phase 1 only supports "script".
-export type MigrationType = "script"
+export type MigrationType = "script" | "asset" | "remove"
 
 -- A single entry in the manifest's migrations array.
 export type MigrationEntry = {
@@ -12,6 +11,7 @@ export type MigrationEntry = {
   type: MigrationType,
   depends: { string },
   emits: { string },
+  removes: { string }?,
   description: string,
 }
 

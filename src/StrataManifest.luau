@@ -10,6 +10,8 @@ local StrataManifest = {}
 
 local SUPPORTED_TYPES: { [string]: boolean } = {
   script = true,
+  asset = true,
+  remove = true,
 }
 
 local function validateEntry(entry: any, index: number): MigrationEntry
@@ -29,10 +31,10 @@ local function validateEntry(entry: any, index: number): MigrationEntry
     error(`[Strata] Migration "{id}" is missing required field "type".`)
   end
 
-  if not SUPPORTED_TYPES[raw.type :: string] then
-    error(
-      `[Strata] Migration "{id}" has unsupported type "{raw.type}". Phase 1 only supports "script".`
-    )
+  local entryType = raw.type :: string
+
+  if not SUPPORTED_TYPES[entryType] then
+    error(`[Strata] Migration "{id}" has unsupported type "{entryType}".`)
   end
 
   if type(raw.depends) ~= "table" then
@@ -45,18 +47,43 @@ local function validateEntry(entry: any, index: number): MigrationEntry
     end
   end
 
+  -- Validate "emits" field.
   if type(raw.emits) ~= "table" then
     error(`[Strata] Migration "{id}" is missing required field "emits" (array of strings).`)
   end
 
   local emits = raw.emits :: { any }
-  if #emits == 0 then
-    error(`[Strata] Migration "{id}" must emit at least one tag.`)
+
+  -- script and asset: emits must be non-empty. remove: emits can be empty.
+  if (entryType == "script" or entryType == "asset") and #emits == 0 then
+    error(`[Strata] Migration "{id}" (type "{entryType}") must emit at least one tag.`)
   end
 
   for i, tag in ipairs(emits) do
     if type(tag) ~= "string" then
       error(`[Strata] Migration "{id}" emits[{i}] must be a string, got {type(tag)}.`)
+    end
+  end
+
+  -- Parse optional "removes" field.
+  local removes: { string }? = nil
+  if raw.removes ~= nil then
+    if type(raw.removes) ~= "table" then
+      error(`[Strata] Migration "{id}" field "removes" must be an array of strings.`)
+    end
+    local removesList = raw.removes :: { any }
+    for i, tag in ipairs(removesList) do
+      if type(tag) ~= "string" then
+        error(`[Strata] Migration "{id}" removes[{i}] must be a string, got {type(tag)}.`)
+      end
+    end
+    removes = raw.removes :: { string }
+  end
+
+  -- remove type: removes must be non-empty.
+  if entryType == "remove" then
+    if removes == nil or #(removes :: { string }) == 0 then
+      error(`[Strata] Migration "{id}" (type "remove") must declare a non-empty "removes" array.`)
     end
   end
 
@@ -69,6 +96,7 @@ local function validateEntry(entry: any, index: number): MigrationEntry
     type = raw.type :: StrataTypes.MigrationType,
     depends = raw.depends :: { string },
     emits = raw.emits :: { string },
+    removes = removes,
     description = raw.description :: string,
   }
 end

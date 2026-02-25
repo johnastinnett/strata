@@ -41,4 +41,13 @@ function StrataTags.has(registry: TagRegistry, tagName: string): boolean
   return registry._store[tagName] ~= nil
 end
 
+function StrataTags.remove(registry: TagRegistry, tagName: string): any
+  local value = registry._store[tagName]
+  if value == nil then
+    error(`[Strata] Cannot remove tag "{tagName}". It has not been emitted.`)
+  end
+  registry._store[tagName] = nil
+  return value
+end
+
 return StrataTags

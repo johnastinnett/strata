@@ -62,7 +62,6 @@ local function validateDependencyResolution(entries: { MigrationEntry })
   for _, entry in ipairs(entries) do
     local ownEmits = entryEmits[entry.id]
     for _, dep in ipairs(entry.depends) do
-      -- Check self-dependency first (more specific error).
       if ownEmits[dep] then
         error(`[Strata] Migration "{entry.id}" depends on its own emitted tag "{dep}".`)
       end
@@ -75,7 +74,7 @@ local function validateDependencyResolution(entries: { MigrationEntry })
   end
 end
 
-local function validateNoCycles(entries: { MigrationEntry })
+local function validateRemoves(entries: { MigrationEntry })
   -- Build tag-to-emitter map.
   local tagToEmitter: { [string]: string } = {}
   for _, entry in ipairs(entries) do
@@ -84,7 +83,52 @@ local function validateNoCycles(entries: { MigrationEntry })
     end
   end
 
-  -- Build migration-to-migration adjacency and in-degrees.
+  -- Collect all tags that get removed and which migration removes them.
+  local removedTags: { [string]: string } = {}
+  for _, entry in ipairs(entries) do
+    local removes = entry.removes
+    if removes == nil then
+      continue
+    end
+    for _, tagName in ipairs(removes :: { string }) do
+      if not tagToEmitter[tagName] then
+        error(
+          `[Strata] Migration "{entry.id}" removes tag "{tagName}" which is not emitted by any migration.`
+        )
+      end
+      local existingRemover = removedTags[tagName]
+      if existingRemover then
+        error(
+          `[Strata] Tag "{tagName}" is removed by both "{existingRemover}" and "{entry.id}". A tag may only be removed once.`
+        )
+      end
+      removedTags[tagName] = entry.id
+    end
+  end
+
+  -- No migration other than the remover may depend on a removed tag.
+  for _, entry in ipairs(entries) do
+    for _, dep in ipairs(entry.depends) do
+      local remover = removedTags[dep]
+      if remover and remover ~= entry.id then
+        error(
+          `[Strata] Migration "{entry.id}" depends on tag "{dep}" which is removed by migration "{remover}". Cannot depend on removed tags.`
+        )
+      end
+    end
+  end
+end
+
+-- Builds adjacency edges from both depends and removes for cycle detection.
+-- Removes create implicit ordering: the remover must run after the emitter.
+local function buildEdges(entries: { MigrationEntry })
+  local tagToEmitter: { [string]: string } = {}
+  for _, entry in ipairs(entries) do
+    for _, tag in ipairs(entry.emits) do
+      tagToEmitter[tag] = entry.id
+    end
+  end
+
   local inDegree: { [string]: number } = {}
   local dependents: { [string]: { string } } = {}
 
@@ -98,8 +142,9 @@ local function validateNoCycles(entries: { MigrationEntry })
   end
 
   for _, entry in ipairs(entries) do
-    -- Deduplicate dependency sources (multiple depends tags may point to the same migration).
     local seenSources: { [string]: boolean } = {}
+
+    -- Edges from explicit depends.
     for _, dep in ipairs(entry.depends) do
       local sourceId = tagToEmitter[dep]
       if sourceId and not seenSources[sourceId] then
@@ -108,7 +153,26 @@ local function validateNoCycles(entries: { MigrationEntry })
         table.insert(dependents[sourceId] :: { string }, entry.id)
       end
     end
+
+    -- Implicit edges from removes: remover runs after emitter.
+    local removes = entry.removes
+    if removes then
+      for _, tagName in ipairs(removes :: { string }) do
+        local sourceId = tagToEmitter[tagName]
+        if sourceId and not seenSources[sourceId] then
+          seenSources[sourceId] = true
+          inDegree[entry.id] = (inDegree[entry.id] :: number) + 1
+          table.insert(dependents[sourceId] :: { string }, entry.id)
+        end
+      end
+    end
   end
+
+  return inDegree, dependents
+end
+
+local function validateNoCycles(entries: { MigrationEntry })
+  local inDegree, dependents = buildEdges(entries)
 
   -- Kahn's algorithm.
   local queue: { string } = {}
@@ -135,7 +199,6 @@ local function validateNoCycles(entries: { MigrationEntry })
   end
 
   if processedCount ~= #entries then
-    -- Collect the migrations stuck in the cycle.
     local cycleIds: { string } = {}
     for _, entry in ipairs(entries) do
       if (inDegree[entry.id] :: number) > 0 then
@@ -152,6 +215,7 @@ function StrataValidation.validate(entries: { MigrationEntry })
   validateOriginRule(entries)
   validateTagUniqueness(entries)
   validateDependencyResolution(entries)
+  validateRemoves(entries)
   validateNoCycles(entries)
 end
 
